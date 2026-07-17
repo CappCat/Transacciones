@@ -134,11 +134,6 @@ Al ejecutar el script se observan logs como:
   - Transporte reservado
   - Transaccion principal confirmada
 
-- Reserva con compensacion:
-  - Vuelo reservado
-  - Error en hotel: sin disponibilidad
-  - Rollback a savepoint sp_despues_vuelo
-  - Compensacion aplicada: vuelo cancelado
 
 - Deadlock:
   - T1 bloquea vuelos y T2 bloquea hoteles
@@ -149,29 +144,9 @@ Al ejecutar el script se observan logs como:
   - statement_timeout interrumpe la consulta lenta
   - Se ejecuta rollback de la conexion de timeout
 
-### Capturas de pantalla
 
-Deja aqui tus capturas reales de la ejecucion:
+### Logs de ejecucion
 
-- Captura 1: reserva exitosa
-
-  [Espacio para pegar captura]
-
-- Captura 2: reserva con savepoint y compensacion
-
-  [Espacio para pegar captura]
-
-- Captura 3: deadlock con hilos
-
-  [Espacio para pegar captura]
-
-- Captura 4: timeout de transaccion
-
-  [Espacio para pegar captura]
-
-### Logs reales de ejecucion
-
-Pega aqui la salida real de consola para cada caso:
 
 - Log reserva exitosa
 
