@@ -49,7 +49,6 @@ Si el hotel no tiene cupo, el sistema vuelve a un savepoint y ejecuta una transa
 - simulacion_transacciones.py
 - transaccion.sql
 - requirements.txt
-- .gitignore
 - README.md
 
 ## 4. Requisitos previos
@@ -97,34 +96,33 @@ python simulacion_transacciones.py --forzar-fallo-hotel
 ## 7. Explicacion del codigo
 
 ### create_tables(conn)
-Crea las tablas vuelos, hoteles y transportes con disponibilidad.
+Crea las tablas `vuelos`, `hoteles` y `transportes` si no existen. Cada una controla disponibilidad con una restriccion `CHECK` para evitar valores negativos.
 
 ### seed_data(conn)
-Inserta 10 registros por tabla. Si ya existen, actualiza disponibilidad a un valor inicial.
+Inserta o actualiza 10 filas por tabla con disponibilidad inicial de 5. Esto permite volver a ejecutar la practica sin limpiar manualmente la base.
 
 ### reservar_paquete(conn, flight_id, hotel_id, transporte_id, forzar_fallo_hotel=False)
-Ejecuta la transaccion principal:
+Ejecuta la transaccion principal de reserva turistica:
 
-- Paso 1: descuenta 1 asiento en vuelos.
-- Crea savepoint despues del vuelo.
-- Paso 2: intenta descontar 1 habitacion en hoteles.
-- Si falla hotel:
-  - rollback al savepoint.
-  - compensacion: suma 1 al vuelo para cancelar la compra.
-  - rollback total y retorno controlado.
-- Paso 3: descuenta 1 vehiculo en transportes.
-- commit final si todo sale bien.
+- `BEGIN` abre la transaccion.
+- Se descuenta un asiento del vuelo.
+- `SAVEPOINT sp_despues_vuelo` deja un punto de recuperacion si el hotel falla.
+- Se intenta reservar el hotel.
+- Si el hotel no tiene cupo, el flujo hace `ROLLBACK TO SAVEPOINT`, cancela el vuelo con una compensacion y confirma ese cambio con `COMMIT`.
+- Si el hotel si tiene cupo, se reserva el transporte y se hace `COMMIT` de toda la compra.
+
+Este flujo refleja una reserva real: primero se confirma el recurso mas escaso y luego se compensa si el siguiente paso no puede completarse.
 
 ### simular_deadlock(dsn)
-Lanza dos hilos con dos transacciones:
+Lanza dos hilos con dos transacciones y usa `threading.Barrier` para que ambas lleguen al segundo bloqueo al mismo tiempo:
 
-- T1 actualiza primero vuelos y luego hoteles.
-- T2 actualiza primero hoteles y luego vuelos.
+- T1 bloquea primero `vuelos` y despues intenta `hoteles`.
+- T2 bloquea primero `hoteles` y despues intenta `vuelos`.
 
-Con bloqueos en orden inverso se provoca deadlock; PostgreSQL aborta una transaccion.
+Como cada hilo toma un recurso distinto primero y luego intenta el recurso del otro hilo, se forma una espera circular. PostgreSQL detecta el ciclo y aborta una de las transacciones con `DeadlockDetected`.
 
-### simular_timeout(conn)
-Configura statement_timeout y ejecuta pg_sleep para causar cancelacion por timeout.
+### simular_timeout(dsn)
+Abre una conexion aislada, configura `statement_timeout` y ejecuta `pg_sleep` para forzar la cancelacion de la sentencia. La simulacion captura `QueryCanceled` y hace `ROLLBACK` para dejar la conexion limpia.
 
 ## 8. Resultados obtenidos
 
@@ -139,34 +137,70 @@ Al ejecutar el script se observan logs como:
 - Reserva con compensacion:
   - Vuelo reservado
   - Error en hotel: sin disponibilidad
-  - Rollback a savepoint
+  - Rollback a savepoint sp_despues_vuelo
   - Compensacion aplicada: vuelo cancelado
 
 - Deadlock:
-  - Deadlock detectado en una de las transacciones
+  - T1 bloquea vuelos y T2 bloquea hoteles
+  - Ambos intentan tomar el recurso restante
+  - PostgreSQL detecta el deadlock y aborta una transaccion
 
 - Timeout:
-  - Timeout detectado y rollback de la transaccion
+  - statement_timeout interrumpe la consulta lenta
+  - Se ejecuta rollback de la conexion de timeout
 
-Nota sobre capturas:
-Agrega capturas de consola o del log de ejecucion para cada simulacion en esta seccion.
+### Capturas de pantalla
 
-## 9. Preguntas de reflexion (5) y respuestas
+Deja aqui tus capturas reales de la ejecucion:
 
-1. ¿Que ventaja ofrece un savepoint frente a hacer rollback total?
-Permite recuperar parcialmente la transaccion, manteniendo operaciones validas anteriores y evitando rehacer todo el flujo.
+- Captura 1: reserva exitosa
 
-2. ¿Por que se usa una transaccion de compensacion si falla el hotel?
-Porque la compra del vuelo ya se habia ejecutado. La compensacion restaura consistencia de negocio cancelando ese paso previo.
+  [Espacio para pegar captura]
 
-3. ¿Como se genera el deadlock en este proyecto?
-Dos transacciones bloquean recursos compartidos en orden inverso, creando espera circular.
+- Captura 2: reserva con savepoint y compensacion
 
-4. ¿Que diferencia hay entre deadlock y timeout?
-El deadlock es una interdependencia circular de bloqueos entre transacciones; el timeout es un limite de tiempo excedido por espera o ejecucion.
+  [Espacio para pegar captura]
 
-5. ¿Que buenas practicas ayudan a reducir estos problemas?
-Mantener transacciones cortas, ordenar accesos a recursos de forma consistente, usar niveles de aislamiento adecuados y manejar excepciones con rollback y reintentos.
+- Captura 3: deadlock con hilos
+
+  [Espacio para pegar captura]
+
+- Captura 4: timeout de transaccion
+
+  [Espacio para pegar captura]
+
+### Logs reales de ejecucion
+
+Pega aqui la salida real de consola para cada caso:
+
+- Log reserva exitosa
+
+  ![Log](imagenes/image1.png)
+
+- Log deadlock
+
+  ![Log](imagenes/image3.png)
+
+- Log timeout
+
+  ![Log](imagenes/image2.png)
+
+## 9. Preguntas de reflexion
+
+1. ¿Por que es importante usar savepoints en transacciones largas? ¿Que problema resuelven?
+Los savepoints permiten deshacer solo la parte defectuosa de una transaccion larga sin perder el trabajo anterior. Resuelven el problema de tener que hacer rollback total cuando solo falla un paso intermedio.
+
+2. En el escenario de reserva, ¿que pasaria si no usariamos savepoints y el hotel no tuviera cupo? ¿Como afectaria a la consistencia de los datos?
+Sin savepoints, el fallo del hotel obligaria a revertir toda la transaccion, incluido el vuelo ya reservado. Eso dejaria inconsistente la logica del negocio porque se perderia el progreso valido del flujo y se tendria que repetir todo desde cero.
+
+3. ¿Como se produce un deadlock en una base de datos? Explica el ejemplo que implementaste y como lo resolviste.
+Un deadlock aparece cuando dos transacciones se quedan esperando recursos que la otra ya bloqueo. En este proyecto, un hilo bloquea primero `vuelos` y luego intenta `hoteles`, mientras el otro hace lo contrario. Para hacerlo reproducible, ambos hilos se sincronizan con un `Barrier`. La mitigacion del ejemplo consiste en observar el bloqueo circular y dejar que PostgreSQL aborta una de las transacciones; en sistemas reales, ademas se recomienda ordenar los accesos a los recursos siempre en el mismo orden.
+
+4. ¿Que estrategias de mitigacion existen para evitar deadlocks en sistemas concurrentes?
+Las principales estrategias son mantener un orden consistente de acceso a tablas o filas, hacer transacciones mas cortas, reducir el tiempo de bloqueo, crear los indices adecuados para que las consultas tarden menos y agregar reintentos controlados cuando la base devuelva un deadlock.
+
+5. ¿Que sucede cuando una transaccion alcanza el timeout? ¿Como afecta al usuario final y que mecanismos se pueden implementar para manejar esta situacion?
+Cuando la transaccion supera el tiempo limite, PostgreSQL cancela la consulta y revierte el trabajo pendiente con rollback. Para el usuario final esto se ve como una operacion fallida o demorada. Para manejarlo mejor se pueden mostrar mensajes claros, reintentar solo cuando tenga sentido, usar tiempos maximos razonables, mover procesos largos a segundo plano y registrar el error para diagnostico.
 
 ## 10. Conclusion
 

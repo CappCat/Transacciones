@@ -22,3 +22,6 @@ Thumbs.db
 .env
 .env.*
 *.local
+
+# Local SQL practice guides
+query_ejemplo.sql
